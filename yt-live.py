@@ -32,6 +32,9 @@ DEFAULT_NUM_LATEST = int(os.environ.get("NUM_LATEST_DEFAULT", "5"))
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")  # optional
 YT_COOKIES = os.environ.get("YT_COOKIES")  # optional cookies file
 
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+USER_AGENT_ARGS = ["--user-agent", USER_AGENT]
+
 REENCODE_ARGS = [
     "-c:v", "libx264",
     "-preset", "veryfast",
@@ -86,7 +89,7 @@ def run_cmd(cmd, capture=False, timeout=None):
 def get_channel_ids_fast(channel_url):
     """Fast list of IDs using yt-dlp --flat-playlist --get-id"""
     cookies = YT_COOKIES
-    cmd = YTDLP + (["--cookies", cookies] if cookies else []) + ["--flat-playlist", "--get-id", channel_url] + EXTRACTOR_ARGS
+    cmd = YTDLP + (["--cookies", cookies] if cookies else []) + USER_AGENT_ARGS + ["--flat-playlist", "--get-id", channel_url] + EXTRACTOR_ARGS
     try:
         out = run_cmd(cmd, capture=True, timeout=180)  # Increased timeout from 20 to 180 seconds
         ids = [line.strip() for line in out.splitlines() if line.strip()]
@@ -113,7 +116,7 @@ def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
 
     ids_to_fetch = ids if max_items is None else ids[:max_items]
     watch_urls = [f"https://www.youtube.com/watch?v={vid}" for vid in ids_to_fetch]
-    cmd = YTDLP + (["--cookies", cookies] if cookies else []) + ["--dump-json"] + watch_urls + EXTRACTOR_ARGS
+    cmd = YTDLP + (["--cookies", cookies] if cookies else []) + USER_AGENT_ARGS + ["--dump-json"] + watch_urls + EXTRACTOR_ARGS
     print("[batch] running yt-dlp for", len(watch_urls), "items", flush=True)
     batch_timeout = max(10, time_budget)
     def parse_meta(meta, vid):
@@ -237,9 +240,10 @@ def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
 def download_video_to_temp(video_id, tmp_dir):
     url = f"https://www.youtube.com/watch?v={video_id}"
     dest = os.path.join(tmp_dir, f"{video_id}.%(ext)s")
-    cmd = YTDLP + ["-o", dest, url] + EXTRACTOR_ARGS
+    # cmd = YTDLP + ["-o", dest, url] + EXTRACTOR_ARGS
+    cmd = YTDLP + USER_AGENT_ARGS + ["-o", dest, url] + EXTRACTOR_ARGS
     if YT_COOKIES:
-        cmd = YTDLP + ["--cookies", YT_COOKIES, "-o", dest, url] + EXTRACTOR_ARGS
+        cmd = YTDLP + ["--cookies", YT_COOKIES] + USER_AGENT_ARGS + ["-o", dest, url] + EXTRACTOR_ARGS
     try:
         subprocess.check_call(cmd)
     except Exception as e:
