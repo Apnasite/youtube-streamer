@@ -38,7 +38,11 @@ YTDLP_COMMON_ARGS = [
     "--force-ipv4",
     "-f", "bv*+ba/b",
     "--no-playlist",
-    "--merge-output-format", "mp4"
+    "--merge-output-format", "mp4",
+    "--hls-use-mpegts",
+    "--concurrent-fragments", "1",
+    "--fragment-retries", "10",
+    "--retry-sleep", "fragment:3"
 ]
 
 REENCODE_ARGS = [
