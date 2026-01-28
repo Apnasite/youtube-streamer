@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsxgraph/distrib/jsxgraph.css" />
+  <script src="https://cdn.jsdelivr.net/npm/jsxgraph/distrib/jsxgraphcore.js"></script>
+</head>
+<body>
+<div id="box" class="jxgbox" style="width:400px; height:400px;"></div>
+<script type="text/javascript">
+  const board = JXG.JSXGraph.initBoard('box', {
+    boundingbox: [-5, 5, 5, -5], axis:true
+  });
+
+  const A = board.create('point', [-2, 0], {name:'A'});
+  const B = board.create('point', [2, 0], {name:'B'});
+  const AB = board.create('segment', [A, B]);
+
+  const C = board.create('intersection', [
+    board.create('circle', [A, 4]),
+    board.create('circle', [B, 4])
+  ], {name:'C'});
+
+  board.create('polygon', [A, B, C]);
+</script>
+</body>
+</html>

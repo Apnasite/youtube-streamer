@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Publisher</title>
+  <style>
+    body { text-align: center; font-family: Arial; }
+    canvas { border: 1px solid #ccc; }
+    #scrollText { position: absolute; bottom: 10px; left: 0; width: 100%; white-space: nowrap; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <h2>Publisher (Composed Live Stream)</h2>
+  <video id="cam1" autoplay playsinline muted style="display:none"></video>
+  <video id="cam2" autoplay playsinline muted style="display:none"></video>
+  <canvas id="preview" width="640" height="480"></canvas>
+  <br>
+  <button id="startBtn">Start Publishing</button>
+
+  <script>
+    const cam1 = document.getElementById('cam1');
+    const cam2 = document.getElementById('cam2');
+    const canvas = document.getElementById('preview');
+    const ctx = canvas.getContext('2d');
+    let pc; // peer connection
+
+    async function initCamera() {
+      let stream1 = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      cam1.srcObject = stream1;
+
+      try {
+        let stream2 = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+        cam2.srcObject = stream2;
+      } catch (err) {
+        console.log("Second cam not available", err);
+      }
+
+      draw();
+    }
+
+    function draw() {
+      requestAnimationFrame(draw);
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (cam1.readyState === "playing") {
+        ctx.drawImage(cam1, 0, 0, canvas.width, canvas.height);
+      }
+      if (cam2.readyState === "playing") {
+        ctx.drawImage(cam2, canvas.width - 160, canvas.height - 120, 160, 120);
+      }
+
+      // Logo
+      ctx.fillStyle = "red";
+      ctx.font = "20px Arial";
+      ctx.fillText("LOGO", canvas.width - 60, 30);
+
+      // Scrolling text
+      let t = Date.now() / 50;
+      let msg = " This is a live scrolling text demo ";
+      let x = canvas.width - (t % (ctx.measureText(msg).width + canvas.width));
+      ctx.fillStyle = "yellow";
+      ctx.font = "18px Arial";
+      ctx.fillText(msg, x, canvas.height - 10);
+    }
+
+    document.getElementById('startBtn').onclick = async () => {
+      // Create WebRTC peer connection
+      pc = new RTCPeerConnection();
+
+      // Canvas stream
+      const mixedStream = canvas.captureStream(30);
+      mixedStream.getTracks().forEach(track => pc.addTrack(track, mixedStream));
+
+      // Data channel (optional)
+      pc.createDataChannel("chat");
+
+      // Offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Send offer to server via WebSocket/HTTP (for now, print in console)
+      console.log("Send this SDP to client:", JSON.stringify(offer));
+    };
+
+    initCamera();
+  </script>
+</body>
+</html>

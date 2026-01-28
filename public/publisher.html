@@ -1,0 +1,814 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Publisher → YouTube</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    .control-input {
+      display: none;
+      margin-left: 6px;
+      vertical-align: middle;
+      width: auto !important;
+      min-width: 80px;
+      max-width: 180px;
+    }
+
+    .control-label {
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      margin-right: 8px;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, Arial;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    #mainVideo,
+    #pipVideo {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      display: block;
+    }
+
+    #pipVideo {
+      position: absolute;
+      width: 160px;
+      height: 90px;
+      right: 30px;
+      bottom: 60px;
+      box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+      border: 2px solid #fff;
+      z-index: 2;
+    }
+
+    #logo {
+      position: absolute;
+      top: 24px;
+      right: 32px;
+      width: 92px;
+      overflow: hidden;
+      z-index: 10;
+      text-align: end;
+    }
+
+    #logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    #tickerWrap {
+      position: absolute;
+      bottom: 0;
+      width: 100vw;
+      background: rgba(0, 0, 0, 0.6);
+      color: #ffd700;
+      overflow: hidden;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      z-index: 3;
+    }
+
+    #tickerText {
+      display: inline-block;
+      white-space: nowrap;
+      transform: translateX(100%);
+      animation: scroll 12s linear infinite;
+      padding-left: 10px;
+    }
+
+    @keyframes scroll {
+      from {
+        transform: translateX(100%);
+      }
+
+      to {
+        transform: translateX(-100%);
+      }
+    }
+
+    #controlsBtn {
+      position: absolute;
+      top: 24px;
+      left: 32px;
+      z-index: 20;
+    }
+
+    .modal-dialog {
+      max-width: 600px;
+    }
+
+    #controlsBar {
+
+      /* Ticker style controls */
+      .color-input {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: none;
+        background: none;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
+
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      width: 50vw;
+      margin: auto;
+      z-index: 100;
+      background: rgba(20, 20, 20, 0.95);
+      color: #fff;
+      padding: 6px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <video id="mainVideo" autoplay playsinline muted></video>
+    <video id="pipVideo" autoplay playsinline muted style="display:none"></video>
+    <canvas id="compositeCanvas" style="display:none;"></canvas>
+    <div id="logo"></div>
+    <div id="tickerWrap">
+      <span id="tickerText"></span>
+    </div>
+  </div>
+
+  <div id="controlsBar">
+    <span class="control-label" id="tickerFontIcon"><i class="bi bi-type-bold"></i>
+      <input id="tickerFontSize" type="number" min="10" max="48" value="20"
+        class="form-control form-control-sm control-input" style="width:60px;" />
+    </span>
+    <span class="control-label" id="tickerColorIcon"><i class="bi bi-palette"></i>
+      <input id="tickerColor" type="color" value="#ffd700" class="color-input control-input" />
+    </span>
+    <span class="control-label" id="tickerBgIcon"><i class="bi bi-palette-fill"></i>
+      <input id="tickerBgColor" type="color" value="#000000" class="color-input control-input" />
+    </span>
+    <span class="control-label" id="cameraIcon"><i class="bi bi-camera-video"></i>
+      <select id="cameraSelect" class="form-select form-select-sm control-input"></select>
+    </span>
+    <span class="control-label" id="pipIcon"><i class="bi bi-pip"></i>
+      <input type="checkbox" class="form-check-input d-block control-checkbox" id="pipToggle">
+    </span>
+    <span class="control-label" id="pipSelectIcon"><i class="bi bi-camera-video-fill"></i>
+      <select id="pipSelect" class="form-select form-select-sm control-input"></select>
+    </span>
+    <span class="control-label" id="rtmpIcon"><i class="bi bi-broadcast"></i>
+      <input id="rtmpInput" type="text" class="form-control form-control-sm control-input" list="rtmpKeyList"
+        value="rtmp://a.rtmp.youtube.com/live2/rzkj-qysq-441k-mtv0-amyj"
+        placeholder="rtmp://a.rtmp.youtube.com/live2/YOUR_KEY" />
+      <datalist id="rtmpKeyList">
+        <option value="rtmp://a.rtmp.youtube.com/live2/rzkj-qysq-441k-mtv0-amyj"></option>
+        <option value="rtmp://a.rtmp.youtube.com/live2/csku-yv55-p5f8-pg8r-35b8"></option>
+      </datalist>
+    </span>
+    <span class="control-label" id="chunkIcon"><i class="bi bi-sliders"></i>
+      <input id="chunkMs" type="number" class="form-control form-control-sm control-input" value="1200" />
+    </span>
+    <span class="control-label" id="qualityIcon"><i class="bi bi-aspect-ratio"></i>
+      <select id="qualitySelect" class="form-select form-select-sm control-input">
+        <option value="720">720p</option>
+        <option value="1080">1080p</option>
+      </select>
+    </span>
+    <span class="control-label" id="logoIcon"><i class="bi bi-image"></i>
+      <input type="file" id="logoFileInput" accept="image/*" class="form-control form-control-sm control-input" />
+    </span>
+    <span class="control-label" id="tickerIcon"><i class="bi bi-type"></i>
+      <input id="tickerInput" type="text" class="form-control form-control-sm control-input"
+        value="Breaking: Example ticker message — replace with your text —" />
+    </span>
+    <button id="startBtn" type="button" class="icon-btn btn btn-outline-primary" title="Start"><i
+        class="bi bi-play-circle-fill"></i> Start</button>
+    <button id="stopBtn" type="button" class="icon-btn btn btn-outline-danger" title="Stop" disabled><i
+        class="bi bi-stop-circle-fill"></i> Stop</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // --- Live update for all controls ---
+    function triggerRedraw() {
+      // Redraw overlays and ticker by triggering a frame
+      if (typeof ctx !== 'undefined' && compositeCanvas) {
+        ctx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+        if (mainVideo && mainVideo.readyState >= 2) {
+          ctx.drawImage(mainVideo, 0, 0, compositeCanvas.width, compositeCanvas.height);
+        }
+        // PiP
+        if (pipToggle && pipToggle.checked && pipVideo && pipVideo.style.display !== 'none' && pipVideo.readyState >= 2) {
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.6)';
+          ctx.shadowBlur = 6;
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#fff';
+          ctx.drawImage(pipVideo, compositeCanvas.width - 170, compositeCanvas.height - 130, 160, 90);
+          ctx.strokeRect(compositeCanvas.width - 170, compositeCanvas.height - 130, 160, 90);
+          ctx.restore();
+        }
+        // Logo
+        ctx.save();
+        ctx.globalAlpha = 0.8;
+        if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
+          ctx.drawImage(logoImg, compositeCanvas.width - 100, 8, 92, 28);
+        }
+        ctx.restore();
+        // Ticker
+        ctx.save();
+        ctx.globalAlpha = 0.8;
+        let bgColor = tickerBgColorInput ? tickerBgColorInput.value : '#000000';
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, compositeCanvas.height - 34, compositeCanvas.width, 34);
+        ctx.globalAlpha = 1.0;
+        let textColor = tickerColorInput ? tickerColorInput.value : '#ffd700';
+        let fontSize = tickerFontSizeInput ? parseInt(tickerFontSizeInput.value) || 20 : 20;
+        ctx.fillStyle = textColor;
+        ctx.font = fontSize + 'px Arial';
+        const tickerText = tickerInput.value;
+        const tickerWidth = ctx.measureText(tickerText).width;
+        const scrollSpeed = 60;
+        const now = Date.now();
+        const x = compositeCanvas.width - ((now / 1000 * scrollSpeed) % (tickerWidth + compositeCanvas.width));
+        ctx.fillText(tickerText, x, compositeCanvas.height - 10);
+        ctx.restore();
+      }
+    }
+    // Add listeners for all controls
+    document.addEventListener('DOMContentLoaded', () => {
+      [tickerFontSizeInput, tickerColorInput, tickerBgColorInput, tickerInput, cameraSelect, pipSelect, pipToggle, qualitySelect, logoFileInput, chunkMsInput, rtmpInput].forEach(el => {
+        if (el) {
+          el.addEventListener('input', triggerRedraw);
+          el.addEventListener('change', triggerRedraw);
+        }
+      });
+      // Redraw on logo image load
+      if (logoImg) logoImg.addEventListener('load', triggerRedraw);
+
+      // --- Live ticker style update for UI ticker bar ---
+      function updateTickerBarStyle() {
+        if (tickerTextDiv && tickerFontSizeInput) {
+          tickerTextDiv.style.fontSize = tickerFontSizeInput.value + 'px';
+        }
+        if (tickerTextDiv && tickerColorInput) {
+          tickerTextDiv.style.color = tickerColorInput.value;
+        }
+        if (tickerWrap && tickerBgColorInput) {
+          tickerWrap.style.background = tickerBgColorInput.value;
+        }
+      }
+      if (tickerFontSizeInput) tickerFontSizeInput.addEventListener('input', updateTickerBarStyle);
+      if (tickerColorInput) tickerColorInput.addEventListener('input', updateTickerBarStyle);
+      if (tickerBgColorInput) tickerBgColorInput.addEventListener('input', updateTickerBarStyle);
+      // Initial style
+      updateTickerBarStyle();
+    });
+    // Detect and apply orientation on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      resizeCanvasAndContainer();
+    });
+    // --- Icon controls toggle logic ---
+    // Ticker style state (global)
+    var tickerFontSizeInput = null, tickerColorInput = null, tickerBgColorInput = null;
+    function setupIconToggles() {
+      const iconMap = [
+        { icon: 'cameraIcon', input: 'cameraSelect' },
+        { icon: 'pipIcon', input: 'pipToggle' },
+        { icon: 'pipSelectIcon', input: 'pipSelect' },
+        { icon: 'rtmpIcon', input: 'rtmpInput' },
+        { icon: 'chunkIcon', input: 'chunkMs' },
+        { icon: 'qualityIcon', input: 'qualitySelect' },
+        { icon: 'logoIcon', input: 'logoFileInput' },
+        { icon: 'tickerIcon', input: 'tickerInput' },
+        { icon: 'tickerFontIcon', input: 'tickerFontSize' },
+        { icon: 'tickerColorIcon', input: 'tickerColor' },
+        { icon: 'tickerBgIcon', input: 'tickerBgColor' }
+      ];
+      iconMap.forEach(({ icon, input }) => {
+        const iconEl = document.getElementById(icon);
+        const inputEl = document.getElementById(input);
+        if (iconEl && inputEl) {
+          iconEl.addEventListener('click', (e) => {
+            // Only toggle if clicking the icon, not the input itself
+            if (e.target.tagName === 'I' || e.target === iconEl) {
+              inputEl.style.display = inputEl.style.display === 'inline-block' ? 'none' : 'inline-block';
+              if (inputEl.style.display === 'inline-block') {
+                inputEl.focus && inputEl.focus();
+              }
+            }
+          });
+          // Hide input when it loses focus (except file input)
+          if (inputEl.type !== 'file') {
+            inputEl.addEventListener('blur', () => {
+              setTimeout(() => { inputEl.style.display = 'none'; }, 200);
+            });
+          }
+        }
+      });
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      tickerFontSizeInput = document.getElementById('tickerFontSize');
+      tickerColorInput = document.getElementById('tickerColor');
+      tickerBgColorInput = document.getElementById('tickerBgColor');
+      setupIconToggles();
+    });
+    const cameraSelect = document.getElementById('cameraSelect');
+    const pipSelect = document.getElementById('pipSelect');
+    const pipToggle = document.getElementById('pipToggle');
+    const mainVideo = document.getElementById('mainVideo');
+    const pipVideo = document.getElementById('pipVideo');
+    // const rtmpInput = document.getElementById('rtmpInput');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const chunkMsInput = document.getElementById('chunkMs');
+    const container = document.getElementById('container');
+    const compositeCanvas = document.getElementById('compositeCanvas');
+    const ctx = compositeCanvas.getContext('2d');
+    const logoFileInput = document.getElementById('logoFileInput');
+    const logoDiv = document.getElementById('logo');
+    const tickerInput = document.getElementById('tickerInput');
+    const tickerTextDiv = document.getElementById('tickerText');
+      const tickerWrap = document.getElementById('tickerWrap');
+    let mainStream = null,
+      pipStream = null;
+    let logoImg = new Image();
+    logoImg.src = './logo.jpeg'; // default logo
+    let userLogoSelected = false;
+
+    function updateLogoDiv() {
+      logoDiv.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = logoImg.src;
+      img.alt = 'Logo';
+      logoDiv.appendChild(img);
+    }
+    // Initial logo
+    updateLogoDiv();
+    logoImg.onload = updateLogoDiv;
+    logoFileInput.addEventListener('change', function () {
+      const file = logoFileInput.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          logoImg.src = e.target.result;
+          userLogoSelected = true;
+        };
+        reader.readAsDataURL(file);
+      } else {
+        logoImg.src = './logo.jpeg';
+        userLogoSelected = false;
+      }
+    });
+    logoImg.addEventListener('load', updateLogoDiv);
+
+    // --- Orientation and aspect ratio handling ---
+    function getOrientation() {
+      if (window.screen && window.screen.orientation) {
+        return window.screen.orientation.type.startsWith('landscape') ? 'landscape' : 'portrait';
+      }
+      return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+    }
+
+    function getAspectRatio() {
+      // Guard against mainStream not being initialized
+      if (!mainStream || !mainStream.getVideoTracks || !mainStream.getVideoTracks().length) {
+        return 16 / 9;
+      }
+      const settings = mainStream.getVideoTracks()[0].getSettings();
+      if (settings.width && settings.height) {
+        return settings.width / settings.height;
+      }
+      // Default to 16:9
+      return 16 / 9;
+    }
+
+    function resizeCanvasAndContainer() {
+      const orientation = getOrientation();
+      let aspect = getAspectRatio();
+      let width, height;
+      if (orientation === 'landscape') {
+        aspect = aspect > 1 ? aspect : 16 / 9;
+        width = 640;
+        height = Math.round(width / aspect);
+      } else {
+        aspect = aspect < 1 ? aspect : 9 / 16;
+        height = 640;
+        width = Math.round(height * aspect);
+      }
+      compositeCanvas.width = width;
+      compositeCanvas.height = height;
+      // container always fills viewport; do not set its size in JS
+    }
+
+    // Listen for orientation changes
+    window.addEventListener('orientationchange', resizeCanvasAndContainer);
+    window.addEventListener('resize', resizeCanvasAndContainer);
+
+    // Update ticker in UI when input changes
+    tickerInput.addEventListener('input', function () {
+      if (tickerTextDiv) tickerTextDiv.textContent = tickerInput.value;
+    });
+    // Initialize on load
+    if (tickerTextDiv) tickerTextDiv.textContent = tickerInput.value;
+
+    async function listCameras() {
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(s => { s.getTracks().forEach(t => t.stop()); });
+      } catch (e) {
+        console.warn('getUserMedia permission skipped', e);
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videos = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+      pipSelect.innerHTML = '';
+      videos.forEach((d, i) => {
+        const o1 = document.createElement('option');
+        o1.value = d.deviceId;
+        o1.text = d.label || `Camera ${i + 1}`;
+        cameraSelect.appendChild(o1);
+        const o2 = document.createElement('option');
+        o2.value = d.deviceId;
+        o2.text = d.label || `Camera ${i + 1}`;
+        pipSelect.appendChild(o2);
+      });
+      // Show preview of first camera on load
+      if (videos.length > 0) {
+        showCameraPreview(cameraSelect.value);
+      }
+        // Show preview of selected camera in mainVideo
+        async function showCameraPreview(deviceId) {
+          // Stop previous preview stream if any
+          if (mainVideo.srcObject && mainVideo.srcObject.getTracks) {
+            mainVideo.srcObject.getTracks().forEach(t => t.stop());
+          }
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } },
+              audio: false
+            });
+            mainVideo.srcObject = stream;
+          } catch (e) {
+            mainVideo.srcObject = null;
+          }
+        }
+          // Update preview when camera selection changes
+          if (cameraSelect) {
+            cameraSelect.addEventListener('change', function () {
+              showCameraPreview(cameraSelect.value);
+            });
+          }
+    }
+
+    pipToggle.addEventListener('change', () => {
+      pipVideo.style.display = pipToggle.checked ? 'block' : 'none';
+    });
+
+    async function startPublishing() {
+      // Try to lock orientation to landscape if supported (mobile only, must be in user gesture)
+      if (screen.orientation && screen.orientation.lock) {
+        try { await screen.orientation.lock('landscape'); } catch (e) { }
+      }
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+
+      const mainId = cameraSelect.value || undefined;
+      const pipId = pipSelect.value || undefined;
+      const chunkMs = parseInt(chunkMsInput.value) || 1200;
+      const rtmpUrl = (document.getElementById('rtmpInput').value || '').trim();
+      const quality = document.getElementById('qualitySelect').value;
+
+      // Set video constraints based on quality
+      let videoConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
+      if (quality === '1080') {
+        videoConstraints = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+      }
+
+      try {
+        // main stream + audio
+        mainStream = await navigator.mediaDevices.getUserMedia({
+          video: Object.assign({ deviceId: mainId ? { exact: mainId } : undefined }, videoConstraints),
+          audio: true
+        });
+        mainVideo.srcObject = mainStream;
+        // Resize canvas/container to match video aspect/orientation
+        resizeCanvasAndContainer();
+      } catch (e) {
+        alert('Could not start main camera.\n' + (e && e.message ? e.message : e));
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        return;
+      }
+
+      // pip stream if required
+      pipStream = null;
+      if (pipToggle.checked && pipId && pipId !== mainId) {
+        try {
+          pipStream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: pipId }, width: { ideal: 320 }, height: { ideal: 180 } },
+            audio: false
+          });
+          pipVideo.srcObject = pipStream;
+          resizeCanvasAndContainer();
+        } catch (e) {
+          alert('Could not start PiP camera.\n' + (e && e.message ? e.message : e));
+          console.warn('PiP camera error', e);
+        }
+      }
+
+      // Wait for main video to be playing before starting canvas drawing and recording
+      function startDrawingAndRecording() {
+        resizeCanvasAndContainer();
+        let running = true;
+        let lastFrameTime = 0;
+        const targetFps = 30;
+        function drawFrame(now) {
+          if (!running) return;
+          // Always use latest input values
+          ctx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+          if (mainVideo.readyState >= 2) {
+            ctx.drawImage(mainVideo, 0, 0, compositeCanvas.width, compositeCanvas.height);
+          }
+          // Draw PiP video if enabled
+          if (pipToggle.checked && pipVideo.style.display !== 'none' && pipVideo.readyState >= 2) {
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.6)';
+            ctx.shadowBlur = 6;
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#fff';
+            ctx.drawImage(pipVideo, compositeCanvas.width - 170, compositeCanvas.height - 130, 160, 90);
+            ctx.strokeRect(compositeCanvas.width - 170, compositeCanvas.height - 130, 160, 90);
+            ctx.restore();
+          }
+          // Draw logo (image only)
+          ctx.save();
+          ctx.globalAlpha = 0.8;
+          if (logoImg.complete && logoImg.naturalWidth > 0) {
+            ctx.drawImage(logoImg, compositeCanvas.width - 100, 8, 92, 28);
+          }
+          ctx.restore();
+          // Draw ticker (dynamic)
+          ctx.save();
+          ctx.globalAlpha = 0.8;
+          let bgColor = tickerBgColorInput ? tickerBgColorInput.value : '#000000';
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(0, compositeCanvas.height - 34, compositeCanvas.width, 34);
+          ctx.globalAlpha = 1.0;
+          let textColor = tickerColorInput ? tickerColorInput.value : '#ffd700';
+          let fontSize = tickerFontSizeInput ? parseInt(tickerFontSizeInput.value) || 20 : 20;
+          ctx.fillStyle = textColor;
+          ctx.font = fontSize + 'px Arial';
+          const tickerText = tickerInput.value;
+          const tickerWidth = ctx.measureText(tickerText).width;
+          const scrollSpeed = 60; // px/sec
+          const x = compositeCanvas.width - (((now || Date.now()) / 1000 * scrollSpeed) % (tickerWidth + compositeCanvas.width));
+          ctx.fillText(tickerText, x, compositeCanvas.height - 10);
+          ctx.restore();
+          lastFrameTime = now;
+          requestAnimationFrame(drawFrame);
+        }
+        requestAnimationFrame(drawFrame);
+
+        // Use canvas.captureStream
+        const videoStream = compositeCanvas.captureStream(targetFps);
+        // attach audio tracks from mainStream
+        mainStream.getAudioTracks().forEach(t => videoStream.addTrack(t));
+
+        // --- YouTube streaming (WebSocket) ---
+        let retryCount = 0;
+        function startWebSocketAndRecorder() {
+          ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/youtube-stream`);
+          ws.binaryType = 'arraybuffer';
+
+          ws.onopen = () => {
+            console.log('[WS] open; init rtmp');
+            ws.send(JSON.stringify({ rtmpUrl: rtmpUrl }));
+            // start MediaRecorder
+            const options = (() => {
+              let opts = { videoBitsPerSecond: 3500000, audioBitsPerSecond: 192000 };
+              if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) opts.mimeType = 'video/webm;codecs=vp8,opus';
+              else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) opts.mimeType = 'video/webm;codecs=vp9,opus';
+              else opts.mimeType = 'video/webm';
+              return opts;
+            })();
+            recorder = new MediaRecorder(videoStream, options);
+            recorder.ondataavailable = (ev) => {
+              if (ev.data && ev.data.size > 0 && ws && ws.readyState === 1) {
+                ev.data.arrayBuffer().then(buf => {
+                  try { ws.send(buf); } catch (e) { console.warn('ws send err', e); }
+                });
+              }
+            };
+            recorder.onstart = () => console.log('[Recorder] started');
+            recorder.onstop = () => console.log('[Recorder] stopped');
+            recorder.start(chunkMs); // send chunk every chunkMs ms
+            console.log('[Recorder] started with options', options, 'chunkMs', chunkMs);
+            retryCount = 0;
+          };
+
+          ws.onclose = () => {
+            console.log('[WS] closed');
+            running = false;
+            if (recorder && recorder.state !== 'inactive') {
+              try { recorder.stop(); } catch (e) { }
+            }
+            // Retry logic
+            if (retryCount < 3) {
+              setTimeout(() => {
+                console.warn(`[WS] retrying stream (${retryCount + 1}/3)`);
+                running = true;
+                retryCount++;
+                startWebSocketAndRecorder();
+              }, 2000);
+            } else {
+              alert('Streaming connection lost. Please check your network and RTMP URL.');
+            }
+          };
+          ws.onerror = (e) => {
+            console.warn('[WS] error', e);
+            running = false;
+            if (recorder && recorder.state !== 'inactive') {
+              try { recorder.stop(); } catch (e) { }
+            }
+            // Retry logic
+            if (retryCount < 3) {
+              setTimeout(() => {
+                console.warn(`[WS] retrying stream (${retryCount + 1}/3)`);
+                running = true;
+                retryCount++;
+                startWebSocketAndRecorder();
+              }, 2000);
+            } else {
+              alert('Streaming error occurred. Please check your network and RTMP URL.');
+            }
+          };
+          ws.onmessage = (m) => {
+            try {
+              const j = JSON.parse(m.data);
+              if (j.error) {
+                console.warn('[WS] server error:', j);
+                alert('Server error: ' + (j.error || 'Unknown error'));
+              }
+              console.log('[WS] msg', j);
+            } catch (e) { }
+          };
+        }
+        startWebSocketAndRecorder();
+
+        // --- WebRTC Peer-to-Peer streaming (socket.io signaling) ---
+        signalingSocket = io();
+        pc = new RTCPeerConnection();
+        // Add all tracks from videoStream
+        videoStream.getTracks().forEach(track => pc.addTrack(track, videoStream));
+
+        // Send ICE candidates to server
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            signalingSocket.emit('ice-candidate', event.candidate);
+          }
+        };
+
+        // Listen for answer from receiver
+        signalingSocket.on('answer', async (answer) => {
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('[WebRTC] Set remote description (answer)');
+          } catch (e) {
+            console.warn('[WebRTC] Error setting remote description (answer):', e);
+          }
+        });
+
+        // Listen for ICE candidates from receiver
+        signalingSocket.on('ice-candidate', async (candidate) => {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log('[WebRTC] Added ICE candidate from receiver');
+          } catch (e) {
+            console.warn('[WebRTC] Error adding ICE candidate:', e);
+          }
+        });
+
+        // Create and send offer
+        (async () => {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            signalingSocket.emit('offer', offer);
+            console.log('[WebRTC] Sent offer');
+          } catch (e) {
+            console.warn('[WebRTC] Error creating/sending offer:', e);
+          }
+        })();
+      }
+
+      // Wait for mainVideo to be playing and for at least one frame to be drawn before starting recording
+      function waitForFirstCanvasFrame() {
+        let frameDrawn = false;
+        function onFrame(now) {
+          if (!frameDrawn && mainVideo.readyState >= 2) {
+            // Draw one frame to canvas
+            ctx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+            ctx.drawImage(mainVideo, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            frameDrawn = true;
+            // Now start drawing/recording as normal
+            startDrawingAndRecording();
+          } else if (!frameDrawn) {
+            requestAnimationFrame(onFrame);
+          }
+        }
+        requestAnimationFrame(onFrame);
+      }
+      if (mainVideo.readyState >= 2) {
+        waitForFirstCanvasFrame();
+      } else {
+        mainVideo.addEventListener('playing', waitForFirstCanvasFrame, { once: true });
+      }
+    }
+
+    function stopPublishing() {
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+
+      // Stop MediaRecorder cleanly
+      try {
+        if (recorder && recorder.state !== 'inactive') {
+          recorder.ondataavailable = null;
+          recorder.onstop = null;
+          recorder.stop();
+        }
+      } catch (e) { }
+      recorder = null;
+
+      // Close WebSocket cleanly
+      try {
+        if (ws && ws.readyState === 1) {
+          ws.onclose = null;
+          ws.onerror = null;
+          ws.onmessage = null;
+          ws.close();
+        }
+      } catch (e) { }
+      ws = null;
+
+      // Stop all media tracks
+      [mainStream, pipStream].forEach(s => {
+        if (s) s.getTracks().forEach(t => t.stop());
+      });
+      mainStream = null;
+      pipStream = null;
+      mainVideo.srcObject = null;
+      pipVideo.srcObject = null;
+
+      // Stop the animation loop by setting running to false
+      if (typeof running !== 'undefined') running = false;
+    }
+
+    startBtn.addEventListener('click', startPublishing);
+    stopBtn.addEventListener('click', stopPublishing);
+
+    // populate devices on load
+    listCameras().catch(e => console.error(e));
+  </script>
+</body>
+
+</html>

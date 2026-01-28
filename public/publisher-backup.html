@@ -1,0 +1,591 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Publisher → YouTube</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, Arial;
+      padding: 12px;
+    }
+
+    #container {
+      position: relative;
+      width: 640px;
+      height: 360px;
+      background: #000;
+      overflow: hidden;
+      border: 1px solid #ccc;
+    }
+
+    #mainVideo,
+    #pipVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #pipVideo {
+      position: absolute;
+      width: 160px;
+      height: 90px;
+      right: 10px;
+      bottom: 40px;
+      box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+      border: 2px solid #fff;
+    }
+
+    #tickerWrap {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      color: #ffd700;
+      overflow: hidden;
+      height: 34px;
+      display: flex;
+      align-items: center;
+    }
+
+    #tickerText {
+      display: inline-block;
+      white-space: nowrap;
+      transform: translateX(100%);
+      animation: scroll 12s linear infinite;
+      padding-left: 10px;
+    }
+
+    @keyframes scroll {
+      from {
+        transform: translateX(100%);
+      }
+
+      to {
+        transform: translateX(-100%);
+      }
+    }
+
+    .controls {
+      margin: 10px 0 18px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    select,
+    input {
+      padding: 6px;
+    }
+
+    button {
+      padding: 8px 12px;
+    }
+
+    #logo {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 92px;
+      overflow: hidden;
+      z-index: 10;
+      text-align: end;
+    }
+
+    #logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+  </style>
+</head>
+
+<body>
+  <h3>Publisher → YouTube (secure)</h3>
+
+  <div class="controls">
+    <label>Main camera:
+      <select id="cameraSelect"></select>
+    </label>
+
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="pipToggle"> PiP
+    </label>
+
+    <label>PiP camera:
+      <select id="pipSelect"></select>
+    </label>
+
+    <label>RTMP URL:
+      <input id="rtmpInput" style="width:400px" list="rtmpKeyList"
+        value="rtmp://a.rtmp.youtube.com/live2/rzkj-qysq-441k-mtv0-amyj"
+        placeholder="rtmp://a.rtmp.youtube.com/live2/YOUR_KEY" />
+      <datalist id="rtmpKeyList">
+        <option value="rtmp://a.rtmp.youtube.com/live2/rzkj-qysq-441k-mtv0-amyj"></option>
+        <option value="rtmp://a.rtmp.youtube.com/live2/csku-yv55-p5f8-pg8r-35b8"></option>
+      </datalist>
+    </label>
+
+    <label>Chunk ms:
+      <input id="chunkMs" type="number" value="1200" style="width:80px" />
+    </label>
+
+    <label>Quality:
+      <select id="qualitySelect">
+        <option value="720">720p</option>
+        <option value="1080">1080p</option>
+      </select>
+    </label>
+    <label>Logo:
+      <input type="file" id="logoFileInput" accept="image/*" style="margin-left:8px;" />
+    </label>
+    <label>Ticker:
+      <input id="tickerInput" value="Breaking: Example ticker message — replace with your text —" style="width:260px" />
+    </label>
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+  </div>
+
+  <div id="container">
+    <video id="mainVideo" autoplay playsinline muted></video>
+    <video id="pipVideo" autoplay playsinline muted style="display:none"></video>
+    
+    <div id="tickerWrap">
+      <div id="tickerText"></div>
+    </div>
+    <canvas id="compositeCanvas" style="display:none;"></canvas>
+    <div id="logo"></div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js">
+  </script>
+  <script>
+    const cameraSelect = document.getElementById('cameraSelect');
+    const pipSelect = document.getElementById('pipSelect');
+    const pipToggle = document.getElementById('pipToggle');
+    const mainVideo = document.getElementById('mainVideo');
+    const pipVideo = document.getElementById('pipVideo');
+    // const rtmpInput = document.getElementById('rtmpInput');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const chunkMsInput = document.getElementById('chunkMs');
+    const container = document.getElementById('container');
+    const compositeCanvas = document.getElementById('compositeCanvas');
+    const ctx = compositeCanvas.getContext('2d');
+    const logoFileInput = document.getElementById('logoFileInput');
+    const logoDiv = document.getElementById('logo');
+    const tickerInput = document.getElementById('tickerInput');
+    const tickerTextDiv = document.getElementById('tickerText');
+    let mainStream = null, pipStream = null;
+    let logoImg = new Image();
+    logoImg.src = './logo.jpeg'; // default logo
+    let userLogoSelected = false;
+
+    function updateLogoDiv() {
+      logoDiv.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = logoImg.src;
+      img.alt = 'Logo';
+      logoDiv.appendChild(img);
+    }
+    // Initial logo
+    updateLogoDiv();
+    logoImg.onload = updateLogoDiv;
+    logoFileInput.addEventListener('change', function() {
+      const file = logoFileInput.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          logoImg.src = e.target.result;
+          userLogoSelected = true;
+        };
+        reader.readAsDataURL(file);
+      } else {
+        logoImg.src = './logo.jpeg';
+        userLogoSelected = false;
+      }
+    });
+    logoImg.addEventListener('load', updateLogoDiv);
+
+    // --- Orientation and aspect ratio handling ---
+    function getOrientation() {
+      if (window.screen && window.screen.orientation) {
+        return window.screen.orientation.type.startsWith('landscape') ? 'landscape' : 'portrait';
+      }
+      return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+    }
+
+    function getAspectRatio() {
+      // Guard against mainStream not being initialized
+      if (!mainStream || !mainStream.getVideoTracks || !mainStream.getVideoTracks().length) {
+        return 16 / 9;
+      }
+      const settings = mainStream.getVideoTracks()[0].getSettings();
+      if (settings.width && settings.height) {
+        return settings.width / settings.height;
+      }
+      // Default to 16:9
+      return 16 / 9;
+    }
+
+    function resizeCanvasAndContainer() {
+      const orientation = getOrientation();
+      let aspect = getAspectRatio();
+      let width, height;
+      if (orientation === 'landscape') {
+        aspect = aspect > 1 ? aspect : 16 / 9;
+        width = 640;
+        height = Math.round(width / aspect);
+      } else {
+        aspect = aspect < 1 ? aspect : 9 / 16;
+        height = 640;
+        width = Math.round(height * aspect);
+      }
+      compositeCanvas.width = width;
+      compositeCanvas.height = height;
+      container.style.width = width + 'px';
+      container.style.height = height + 'px';
+    }
+
+    // Listen for orientation changes
+    window.addEventListener('orientationchange', resizeCanvasAndContainer);
+    window.addEventListener('resize', resizeCanvasAndContainer);
+
+    // Update ticker in UI when input changes
+    tickerInput.addEventListener('input', function() {
+      if (tickerTextDiv) tickerTextDiv.textContent = tickerInput.value;
+    });
+    // Initialize on load
+    if (tickerTextDiv) tickerTextDiv.textContent = tickerInput.value;
+
+    async function listCameras() {
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(s => { s.getTracks().forEach(t => t.stop()); });
+      } catch (e) {
+        console.warn('getUserMedia permission skipped', e);
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videos = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+      pipSelect.innerHTML = '';
+      videos.forEach((d, i) => {
+        const o1 = document.createElement('option'); o1.value = d.deviceId; o1.text = d.label || `Camera ${i + 1}`; cameraSelect.appendChild(o1);
+        const o2 = document.createElement('option'); o2.value = d.deviceId; o2.text = d.label || `Camera ${i + 1}`; pipSelect.appendChild(o2);
+      });
+    }
+
+    pipToggle.addEventListener('change', () => {
+      pipVideo.style.display = pipToggle.checked ? 'block' : 'none';
+    });
+
+    async function startPublishing() {
+      // Try to lock orientation to landscape if supported (mobile only, must be in user gesture)
+      if (screen.orientation && screen.orientation.lock) {
+        try { await screen.orientation.lock('landscape'); } catch (e) { }
+      }
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+
+      const mainId = cameraSelect.value || undefined;
+      const pipId = pipSelect.value || undefined;
+      const chunkMs = parseInt(chunkMsInput.value) || 1200;
+      const rtmpUrl = (document.getElementById('rtmpInput').value || '').trim();
+      const quality = document.getElementById('qualitySelect').value;
+
+      // Set video constraints based on quality
+      let videoConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
+      if (quality === '1080') {
+        videoConstraints = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+      }
+
+      try {
+        // main stream + audio
+        mainStream = await navigator.mediaDevices.getUserMedia({
+          video: Object.assign({ deviceId: mainId ? { exact: mainId } : undefined }, videoConstraints),
+          audio: true
+        });
+        mainVideo.srcObject = mainStream;
+        // Resize canvas/container to match video aspect/orientation
+        resizeCanvasAndContainer();
+      } catch (e) {
+        alert('Could not start main camera.\n' + (e && e.message ? e.message : e));
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        return;
+      }
+
+      // pip stream if required
+      pipStream = null;
+      if (pipToggle.checked && pipId && pipId !== mainId) {
+        try {
+          pipStream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: pipId }, width: { ideal: 320 }, height: { ideal: 180 } },
+            audio: false
+          });
+          pipVideo.srcObject = pipStream;
+          resizeCanvasAndContainer();
+        } catch (e) {
+          alert('Could not start PiP camera.\n' + (e && e.message ? e.message : e));
+          console.warn('PiP camera error', e);
+        }
+      }
+
+      // Wait for main video to be playing before starting canvas drawing and recording
+      function startDrawingAndRecording() {
+        resizeCanvasAndContainer();
+        let running = true;
+        let lastFrameTime = 0;
+        const targetFps = 30;
+        function drawFrame(now) {
+          if (!running) return;
+          if (!lastFrameTime || now - lastFrameTime >= 1000 / targetFps) {
+            // Draw main video
+            ctx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+            if (mainVideo.readyState >= 2) {
+              ctx.drawImage(mainVideo, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            }
+            // Draw PiP video if enabled
+            if (pipToggle.checked && pipVideo.style.display !== 'none' && pipVideo.readyState >= 2) {
+              ctx.save();
+              ctx.shadowColor = 'rgba(0,0,0,0.6)';
+              ctx.shadowBlur = 6;
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = '#fff';
+              ctx.drawImage(pipVideo, compositeCanvas.width - 170, compositeCanvas.height - 130, 160, 90);
+              ctx.strokeRect(compositeCanvas.width - 170, compositeCanvas.height - 130, 160, 90);
+              ctx.restore();
+            }
+            // Draw logo (image only)
+            ctx.save();
+            ctx.globalAlpha = 0.8;
+            if (logoImg.complete && logoImg.naturalWidth > 0) {
+              ctx.drawImage(logoImg, compositeCanvas.width - 100, 8, 92, 28);
+            }
+            ctx.restore();
+            // Draw ticker (dynamic)
+            ctx.save();
+            ctx.globalAlpha = 0.8;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(0, compositeCanvas.height - 34, compositeCanvas.width, 34);
+            ctx.globalAlpha = 1.0;
+            ctx.fillStyle = '#ffd700';
+            ctx.font = '20px Arial';
+            // Animate ticker text
+            const tickerText = tickerInput.value;
+            const tickerWidth = ctx.measureText(tickerText).width;
+            const scrollSpeed = 60; // px/sec
+            const x = compositeCanvas.width - (((now || Date.now()) / 1000 * scrollSpeed) % (tickerWidth + compositeCanvas.width));
+            ctx.fillText(tickerText, x, compositeCanvas.height - 10);
+            ctx.restore();
+            lastFrameTime = now;
+          }
+          requestAnimationFrame(drawFrame);
+        }
+        requestAnimationFrame(drawFrame);
+
+        // Use canvas.captureStream
+        const videoStream = compositeCanvas.captureStream(targetFps);
+        // attach audio tracks from mainStream
+        mainStream.getAudioTracks().forEach(t => videoStream.addTrack(t));
+
+        // --- YouTube streaming (WebSocket) ---
+        let retryCount = 0;
+        function startWebSocketAndRecorder() {
+          ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/youtube-stream`);
+          ws.binaryType = 'arraybuffer';
+
+          ws.onopen = () => {
+            console.log('[WS] open; init rtmp');
+            ws.send(JSON.stringify({ rtmpUrl: rtmpUrl }));
+            // start MediaRecorder
+            const options = (() => {
+              let opts = { videoBitsPerSecond: 3500000, audioBitsPerSecond: 192000 };
+              if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) opts.mimeType = 'video/webm;codecs=vp8,opus';
+              else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) opts.mimeType = 'video/webm;codecs=vp9,opus';
+              else opts.mimeType = 'video/webm';
+              return opts;
+            })();
+            recorder = new MediaRecorder(videoStream, options);
+            recorder.ondataavailable = (ev) => {
+              if (ev.data && ev.data.size > 0 && ws && ws.readyState === 1) {
+                ev.data.arrayBuffer().then(buf => {
+                  try { ws.send(buf); } catch (e) { console.warn('ws send err', e); }
+                });
+              }
+            };
+            recorder.onstart = () => console.log('[Recorder] started');
+            recorder.onstop = () => console.log('[Recorder] stopped');
+            recorder.start(chunkMs); // send chunk every chunkMs ms
+            console.log('[Recorder] started with options', options, 'chunkMs', chunkMs);
+            retryCount = 0;
+          };
+
+          ws.onclose = () => {
+            console.log('[WS] closed');
+            running = false;
+            if (recorder && recorder.state !== 'inactive') {
+              try { recorder.stop(); } catch (e) { }
+            }
+            // Retry logic
+            if (retryCount < 3) {
+              setTimeout(() => {
+                console.warn(`[WS] retrying stream (${retryCount + 1}/3)`);
+                running = true;
+                retryCount++;
+                startWebSocketAndRecorder();
+              }, 2000);
+            } else {
+              alert('Streaming connection lost. Please check your network and RTMP URL.');
+            }
+          };
+          ws.onerror = (e) => {
+            console.warn('[WS] error', e);
+            running = false;
+            if (recorder && recorder.state !== 'inactive') {
+              try { recorder.stop(); } catch (e) { }
+            }
+            // Retry logic
+            if (retryCount < 3) {
+              setTimeout(() => {
+                console.warn(`[WS] retrying stream (${retryCount + 1}/3)`);
+                running = true;
+                retryCount++;
+                startWebSocketAndRecorder();
+              }, 2000);
+            } else {
+              alert('Streaming error occurred. Please check your network and RTMP URL.');
+            }
+          };
+          ws.onmessage = (m) => {
+            try {
+              const j = JSON.parse(m.data);
+              if (j.error) {
+                console.warn('[WS] server error:', j);
+                alert('Server error: ' + (j.error || 'Unknown error'));
+              }
+              console.log('[WS] msg', j);
+            } catch (e) { }
+          };
+        }
+        startWebSocketAndRecorder();
+
+        // --- WebRTC Peer-to-Peer streaming (socket.io signaling) ---
+        signalingSocket = io();
+        pc = new RTCPeerConnection();
+        // Add all tracks from videoStream
+        videoStream.getTracks().forEach(track => pc.addTrack(track, videoStream));
+
+        // Send ICE candidates to server
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            signalingSocket.emit('ice-candidate', event.candidate);
+          }
+        };
+
+        // Listen for answer from receiver
+        signalingSocket.on('answer', async (answer) => {
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('[WebRTC] Set remote description (answer)');
+          } catch (e) {
+            console.warn('[WebRTC] Error setting remote description (answer):', e);
+          }
+        });
+
+        // Listen for ICE candidates from receiver
+        signalingSocket.on('ice-candidate', async (candidate) => {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log('[WebRTC] Added ICE candidate from receiver');
+          } catch (e) {
+            console.warn('[WebRTC] Error adding ICE candidate:', e);
+          }
+        });
+
+        // Create and send offer
+        (async () => {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            signalingSocket.emit('offer', offer);
+            console.log('[WebRTC] Sent offer');
+          } catch (e) {
+            console.warn('[WebRTC] Error creating/sending offer:', e);
+          }
+        })();
+      }
+
+      // Wait for mainVideo to be playing and for at least one frame to be drawn before starting recording
+      function waitForFirstCanvasFrame() {
+        let frameDrawn = false;
+        function onFrame(now) {
+          if (!frameDrawn && mainVideo.readyState >= 2) {
+            // Draw one frame to canvas
+            ctx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+            ctx.drawImage(mainVideo, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            frameDrawn = true;
+            // Now start drawing/recording as normal
+            startDrawingAndRecording();
+          } else if (!frameDrawn) {
+            requestAnimationFrame(onFrame);
+          }
+        }
+        requestAnimationFrame(onFrame);
+      }
+      if (mainVideo.readyState >= 2) {
+        waitForFirstCanvasFrame();
+      } else {
+        mainVideo.addEventListener('playing', waitForFirstCanvasFrame, { once: true });
+      }
+    }
+
+    function stopPublishing() {
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+
+      // Stop MediaRecorder cleanly
+      try {
+        if (recorder && recorder.state !== 'inactive') {
+          recorder.ondataavailable = null;
+          recorder.onstop = null;
+          recorder.stop();
+        }
+      } catch (e) { }
+      recorder = null;
+
+      // Close WebSocket cleanly
+      try {
+        if (ws && ws.readyState === 1) {
+          ws.onclose = null;
+          ws.onerror = null;
+          ws.onmessage = null;
+          ws.close();
+        }
+      } catch (e) { }
+      ws = null;
+
+      // Stop all media tracks
+      [mainStream, pipStream].forEach(s => {
+        if (s) s.getTracks().forEach(t => t.stop());
+      });
+      mainStream = null;
+      pipStream = null;
+      mainVideo.srcObject = null;
+      pipVideo.srcObject = null;
+
+      // Stop the animation loop by setting running to false
+      if (typeof running !== 'undefined') running = false;
+    }
+
+    startBtn.addEventListener('click', startPublishing);
+    stopBtn.addEventListener('click', stopPublishing);
+
+    // populate devices on load
+    listCameras().catch(e => console.error(e));
+  </script>
+</body>
+
+</html>

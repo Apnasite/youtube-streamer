@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Receiver</title>
+</head>
+<body>
+  <h2>Receiver (Watch Live Stream)</h2>
+  <video id="remoteVideo" autoplay playsinline controls></video>
+  <br>
+  <textarea id="offer" rows="10" cols="80" placeholder="Paste offer from Publisher"></textarea><br>
+  <button id="connectBtn">Connect</button>
+  <pre id="answer"></pre>
+
+  <script>
+    const video = document.getElementById("remoteVideo");
+    let pc;
+
+    document.getElementById("connectBtn").onclick = async () => {
+      pc = new RTCPeerConnection();
+
+      pc.ontrack = (event) => {
+        video.srcObject = event.streams[0];
+      };
+
+      // Get publisher offer
+      const offer = JSON.parse(document.getElementById("offer").value);
+      await pc.setRemoteDescription(offer);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      // For now, print the answer (this would normally go back to publisher via server)
+      document.getElementById("answer").textContent = JSON.stringify(answer);
+    };
+  </script>
+</body>
+</html>

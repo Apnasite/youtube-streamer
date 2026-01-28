@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Publisher</title>
+  <style>
+    video { width: 320px; }
+    canvas { display:none; }
+  </style>
+</head>
+<body>
+  <h2>Publisher</h2>
+
+  <select id="cameraSelect"></select>
+  <br><br>
+
+  <video id="preview" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <br>
+
+  <input id="rtmpUrl" size="80" placeholder="rtmp://a.rtmp.youtube.com/live2/YOURKEY">
+  <br><br>
+
+  <button id="startBtn">Start Stream</button>
+  <button id="stopBtn">Stop Stream</button>
+
+  <script>
+    let ws, mediaRecorder, canvasStream, previewStream;
+    const preview = document.getElementById("preview");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const select = document.getElementById("cameraSelect");
+
+    async function listCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      select.innerHTML = "";
+      devices.filter(d => d.kind === "videoinput").forEach((d,i)=>{
+        const opt = document.createElement("option");
+        opt.value = d.deviceId;
+        opt.text = d.label || `Camera ${i+1}`;
+        select.appendChild(opt);
+      });
+    }
+
+    async function startCamera(deviceId) {
+      if (previewStream) previewStream.getTracks().forEach(t=>t.stop());
+      previewStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId }, audio:true });
+      preview.srcObject = previewStream;
+
+      canvas.width = 640;
+      canvas.height = 480;
+      function draw() {
+        ctx.drawImage(preview,0,0,canvas.width,canvas.height);
+        ctx.fillStyle="rgba(0,0,0,0.5)";
+        ctx.fillRect(10,10,100,30);
+        ctx.fillStyle="white";
+        ctx.fillText("LIVE",20,30);
+        requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    select.addEventListener("change", e => startCamera(e.target.value));
+
+    document.getElementById("startBtn").onclick = () => {
+      ws = new WebSocket(`wss://${location.host}/youtube-stream`);
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ rtmpUrl: document.getElementById("rtmpUrl").value }));
+        canvasStream = canvas.captureStream(30);
+        const stream = new MediaStream([...canvasStream.getTracks(), ...previewStream.getAudioTracks()]);
+        mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8,opus" });
+        mediaRecorder.ondataavailable = e => { if (e.data.size>0) ws.send(e.data); };
+        mediaRecorder.start(1000);
+      };
+    };
+
+    document.getElementById("stopBtn").onclick = () => {
+      if (mediaRecorder) mediaRecorder.stop();
+      if (ws) ws.close();
+    };
+
+    listCameras().then(()=> startCamera(select.value));
+  </script>
+</body>
+</html>

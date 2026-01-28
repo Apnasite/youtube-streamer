@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Print HTML Element → ESC/POS via Web Serial (with 1cm feed)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap">
+<style>
+  body { font-family: Inter, system-ui, -apple-system, Roboto, "Segoe UI", Arial; max-width:900px; margin:20px auto; padding:18px; }
+  h1{ margin:0 0 12px 0 }
+  .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  input, select { padding:8px; margin:6px 0; width:100%; box-sizing:border-box; border-radius:6px; }
+  label{ font-size:13px; color:#333; }
+  button { padding:10px 14px; margin:6px 6px 6px 0; font-size:15px; border-radius:8px; cursor:pointer; }
+  #log { white-space:pre-wrap; background:#fafafa; padding:12px; border-radius:8px; margin-top:12px; min-height:120px; border:1px solid #eee; }
+  .hint { color:#555; font-size:13px; margin-bottom:8px }
+  .panel { padding:12px; border-radius:8px; border:1px solid #eee; margin-bottom:12px; background:#fff; }
+  #sampleArea { background:#fff; padding:12px; border-radius:8px; border:1px dashed #ddd; margin-top:12px; }
+  /* sample receipt style */
+  .receipt { width:360px; font-size:14px; color:#111; }
+  .center { text-align:center; }
+  .bold { font-weight:700; }
+  .items{ margin-top:8px; border-top:1px dashed #ddd; padding-top:8px }
+  .item{ display:flex; justify-content:space-between; margin:6px 0; }
+</style>
+</head>
+<body>
+  <h1>Print HTML Element → ESC/POS (Web Serial)</h1>
+  <div class="hint">Renders DOM element (with CSS) to bitmap and sends to printer. Adds ~1cm space after print before cutting.</div>
+
+  <div class="panel">
+    <label>Element ID to print (example: <code>receipt</code>)</label>
+    <input id="elementId" placeholder="Enter element id (e.g. receipt)" value="receipt" />
+
+    <label>Printer max width (px)</label>
+    <input id="printerWidth" type="number" value="384" />
+
+    <label>Render scale (1-3). Higher = better quality, larger payload</label>
+    <input id="renderScale" type="number" value="2" min="1" max="3" />
+
+    <div class="row" style="margin-top:8px">
+      <button id="requestBtn">Request Serial Port</button>
+      <button id="openBtn" disabled>Open Port</button>
+      <button id="printTestBtn" disabled>Print Test Text</button>
+      <button id="printElementBtn" disabled>Print Element</button>
+      <button id="closeBtn" disabled>Close Port</button>
+    </div>
+
+    <div style="margin-top:8px" class="hint">
+      Baud: <input id="baud" type="number" value="9600" style="width:120px; display:inline-block" />
+      &nbsp; • If nothing prints, try pairing the printer via OS Bluetooth settings first.
+    </div>
+  </div>
+
+  <div id="log">Status: idle</div>
+
+  <h3>Sample element to print (replace or style as you like)</h3>
+  <div id="sampleArea">
+    <div id="receipt" class="receipt" style="background:white; padding:10px; padding-bottom: 25px;">
+      <div class="center bold" style="font-size:18px">My Store</div>
+      <div class="center">123, Market Street</div>
+      <div class="center">Phone: 99999 00000</div>
+      <div style="margin-top:8px">Date: <span id="dt"></span></div>
+      <div class="items">
+        <div class="item"><span>Item A</span><span>₹ 120.00</span></div>
+        <div class="item"><span>Item B</span><span>₹ 250.00</span></div>
+        <div class="item"><span>Item C</span><span>₹ 35.00</span></div>
+      </div>
+      <div style="border-top:1px dashed #ddd; margin-top:8px; padding-top:8px">
+        <div class="item bold"><span>Total</span><span>₹ 405.00</span></div>
+      </div>
+      <div class="center" style="margin-top:8px; font-size:12px">Thank you! Visit again.</div>
+    </div>
+  </div>
+
+  <!-- html2canvas -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<script>
+/* ========== Config: change if needed ========== */
+// For ~203 DPI printers: ~8 dots/mm → 1 cm = 10 mm → ~80 dots
+const FEED_DOTS = 120; // change if you need more/less space (dots)
+/* ========== Logging helpers ========== */
+const logEl = document.getElementById('log');
+function log(...args){ logEl.textContent += '\\n' + args.join(' '); logEl.scrollTop = logEl.scrollHeight; }
+function setLog(s){ logEl.textContent = 'Status: ' + s; }
+setLog('idle');
+
+/* ========== Variables for Web Serial ========== */
+let port = null;
+let writer = null;
+let reader = null;
+let keepReading = false;
+
+/* ========== ESC/POS helpers ========== */
+const ESC = 0x1B, GS = 0x1D;
+const encoder = new TextEncoder();
+
+function escInit(){ return Uint8Array.from([ESC, 0x40]); }
+function escNewline(){ return Uint8Array.from([0x0A]); }
+function escCut(){ return Uint8Array.from([GS, 0x56, 0x01]); }     // GS V 1 (cut)
+function escFeedDots(n){ return Uint8Array.from([ESC, 0x4A, n & 0xFF]); } // ESC J n -> feed n dots
+function escText(s){ return encoder.encode(s); }
+function concatArrays(arrs){ const total = arrs.reduce((a,b)=>a+b.length,0); const out = new Uint8Array(total); let off=0; for(const a of arrs){ out.set(a,off); off+=a.length } return out; }
+
+/* ========== Serial port flow (same as your working code) ========== */
+document.getElementById('requestBtn').addEventListener('click', async () => {
+  try {
+    if (!navigator.serial) throw new Error('navigator.serial not available');
+    log('Requesting port chooser...');
+    port = await navigator.serial.requestPort();
+    log('Port selected.');
+    document.getElementById('openBtn').disabled = false;
+  } catch (err) {
+    log('Port request failed: ' + (err && err.message ? err.message : err));
+  }
+});
+
+document.getElementById('openBtn').addEventListener('click', async () => {
+  try {
+    if (!port) throw new Error('No port selected. Click "Request Serial Port" first.');
+    const baud = parseInt(document.getElementById('baud').value) || 9600;
+    log('Opening port at ' + baud + ' bps...');
+    await port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+
+    writer = port.writable.getWriter();
+
+    if (port.readable) {
+      keepReading = true;
+      reader = port.readable.getReader();
+      (async () => {
+        try {
+          while (keepReading) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) {
+              try { log('Rx: ' + new TextDecoder().decode(value)); } catch(e){ log('Rx bytes: ' + value); }
+            }
+          }
+        } catch (e) {
+          log('Read loop error: ' + e);
+        } finally {
+          if (reader) { reader.releaseLock(); reader = null; }
+        }
+      })();
+    }
+
+    log('Port opened. Ready to print.');
+    document.getElementById('printTestBtn').disabled = false;
+    document.getElementById('printElementBtn').disabled = false;
+    document.getElementById('closeBtn').disabled = false;
+  } catch (err) {
+    log('Open failed: ' + (err && err.message ? err.message : err));
+  }
+});
+
+document.getElementById('closeBtn').addEventListener('click', async () => {
+  try {
+    log('Closing port...');
+    keepReading = false;
+    if (reader) { try { await reader.cancel(); } catch(e){} }
+    if (writer) { try { writer.releaseLock(); } catch(e){} writer = null; }
+    if (port && port.readable) { try { await port.readable.cancel(); } catch(e){} }
+    if (port && port.writable) { try { await port.writable.getWriter().close(); } catch(e){} }
+    if (port) { await port.close(); port = null; }
+    log('Port closed.');
+    document.getElementById('printTestBtn').disabled = true;
+    document.getElementById('printElementBtn').disabled = true;
+    document.getElementById('closeBtn').disabled = true;
+    document.getElementById('openBtn').disabled = true;
+  } catch (err) {
+    log('Close failed: ' + (err && err.message ? err.message : err));
+  }
+});
+
+/* ========== Simple text test ========== */
+document.getElementById('printTestBtn').addEventListener('click', async () => {
+  try {
+    if (!writer) throw new Error('Port not open (writer missing).');
+    log('Sending simple test text...');
+    const pieces = [
+      escInit(),
+      escText('*** WebSerial ESC/POS Test ***\\n'),
+      escText('If nothing prints, your device may not be exposed via Web Serial.\\n'),
+      escText('Time: ' + new Date().toLocaleString() + '\\n'),
+      escNewline(),
+      // feed small lines as extra spacing for test
+      escFeedDots(FEED_DOTS),
+      escCut()
+    ];
+    const payload = concatArrays(pieces);
+    await writeSerialChunks(payload);
+    log('Test text sent.');
+  } catch (err) {
+    log('Test send failed: ' + (err && err.message ? err.message : err));
+  }
+});
+
+/* ========== Print element flow ========== */
+document.getElementById('printElementBtn').addEventListener('click', async () => {
+  try {
+    if (!writer) throw new Error('Port not open (writer missing).');
+    const id = (document.getElementById('elementId').value || '').trim();
+    if (!id) throw new Error('Please enter element id.');
+    const el = document.getElementById(id);
+    if (!el) throw new Error('Element with id "' + id + '" not found.');
+
+    // update date placeholder
+    const dtEl = document.getElementById('dt');
+    if (dtEl) dtEl.textContent = new Date().toLocaleString();
+
+    setTimeout(async () => {
+      await renderAndPrintElement(el);
+    }, 50);
+  } catch (err) {
+    log('Print element failed: ' + (err && err.message ? err.message : err));
+  }
+});
+
+/* ========== Rendering & conversion utilities ========== */
+
+const PRINTER_MAX_WIDTH_DEFAULT = 384; // common thermal printer width in px
+
+async function renderAndPrintElement(element) {
+  try {
+    const maxWidth = parseInt(document.getElementById('printerWidth').value) || PRINTER_MAX_WIDTH_DEFAULT;
+    const renderScale = Math.max(1, Math.min(3, parseInt(document.getElementById('renderScale').value) || 2));
+
+    log('Rendering element to canvas (scale ' + renderScale + ') ...');
+    const canvas = await html2canvas(element, { scale: renderScale, useCORS: true, backgroundColor: '#ffffff' });
+
+    log('Canvas rendered: ' + canvas.width + 'x' + canvas.height + '. Converting to monochrome for ' + maxWidth + 'px printer width...');
+
+    const mono = convertCanvasToMono(canvas, maxWidth);
+    log('Mono bitmap: ' + mono.width + 'x' + mono.height + ', bytesPerRow=' + mono.bytesPerRow);
+
+    const raster = buildRasterCommand(mono);
+    // final buffer: init + raster + FEED DOTS (1cm) + cut
+    const init = escInit();
+    const feed = escFeedDots(FEED_DOTS); // adds ~1cm gap
+    const cut = escCut();
+    const finalBuf = new Uint8Array(init.length + raster.length + feed.length + cut.length);
+    finalBuf.set(init, 0);
+    finalBuf.set(raster, init.length);
+    finalBuf.set(feed, init.length + raster.length);
+    finalBuf.set(cut, init.length + raster.length + feed.length);
+
+    log('Sending ' + finalBuf.length + ' bytes to printer (chunked)...');
+    await writeSerialChunks(finalBuf);
+    log('Print element sent. Check printer.');
+  } catch (err) {
+    log('Render/print error: ' + (err && err.message ? err.message : err));
+  }
+}
+
+/* Convert canvas -> monochrome bitmap (threshold) and return bytes per row and data */
+function convertCanvasToMono(canvas, maxWidthPx) {
+  const scale = Math.min(1, maxWidthPx / canvas.width);
+  const w = Math.max(1, Math.floor(canvas.width * scale));
+  const h = Math.max(1, Math.floor(canvas.height * scale));
+
+  const tmp = document.createElement('canvas');
+  tmp.width = w;
+  tmp.height = h;
+  const ctx = tmp.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,w,h);
+  ctx.drawImage(canvas, 0, 0, w, h);
+
+  const img = ctx.getImageData(0,0,w,h);
+  const pixels = img.data;
+  const bytesPerRow = Math.ceil(w / 8);
+  const data = new Uint8Array(bytesPerRow * h);
+
+  const THRESH = 160; // threshold (0-255). Tweak if output too light/dark.
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      const idx = (y*w + x) * 4;
+      const r = pixels[idx], g = pixels[idx+1], b = pixels[idx+2];
+      const lum = 0.299*r + 0.587*g + 0.114*b;
+      const isBlack = lum < THRESH;
+      if (isBlack) {
+        const byteIndex = y * bytesPerRow + (x >> 3);
+        data[byteIndex] |= (0x80 >> (x % 8));
+      }
+    }
+  }
+  return { width: w, height: h, bytesPerRow, data };
+}
+
+/* Build ESC/POS raster command: GS v 0 m xL xH yL yH d... */
+function buildRasterCommand(mono) {
+  const x = mono.bytesPerRow;
+  const xL = x & 0xFF;
+  const xH = (x >> 8) & 0xFF;
+  const yL = mono.height & 0xFF;
+  const yH = (mono.height >> 8) & 0xFF;
+  const header = Uint8Array.from([0x1D,0x76,0x30,0x00, xL, xH, yL, yH]);
+  const out = new Uint8Array(header.length + mono.data.length);
+  out.set(header, 0);
+  out.set(mono.data, header.length);
+  return out;
+}
+
+/* Write to serial in chunks */
+async function writeSerialChunks(uint8arr) {
+  if (!writer) throw new Error('Serial writer missing; open port first.');
+  const CHUNK = 1024; // serial usually supports large chunks; reduce if errors
+  for (let i=0;i<uint8arr.length;i+=CHUNK){
+    const chunk = uint8arr.slice(i, i+CHUNK);
+    await writer.write(chunk);
+    await new Promise(r => setTimeout(r, 40));
+  }
+}
+
+/* Optional: expose convenience function */
+window.printElementById = async function(id){
+  const el = document.getElementById(id);
+  if (!el) throw new Error('Element not found: ' + id);
+  await renderAndPrintElement(el);
+};
+
+/* ========== Init ========== */
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('dt').textContent = new Date().toLocaleString();
+  (async () => {
+    if (!navigator.serial) return;
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (ports && ports.length) {
+        port = ports[0];
+        log('Previously granted serial port found. Click Open Port to reuse it.');
+        document.getElementById('openBtn').disabled = false;
+      }
+    } catch(e){}
+  })();
+});
+</script>
+</body>
+</html>

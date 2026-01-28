@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Receiver</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        video {
+            width: 640px;
+            height: 480px;
+            border: 1px solid black;
+            background: #000;
+        }
+
+        h2 {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Receiver</h2>
+    <video id="remoteVideo" autoplay playsinline controls></video>
+    <div id="status"></div>
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script>
+        // --- WebRTC Receiver: Connects to Publisher using signaling logic from index.js ---
+        const socket = io();
+        let pc = null;
+        const remoteVideo = document.getElementById("remoteVideo");
+        let pendingCandidates = [];
+        const statusDiv = document.getElementById("status");
+
+        function setStatus(msg) {
+            statusDiv.textContent = msg;
+            console.log('[STATUS]', msg);
+        }
+
+        function debugLog(msg, ...args) {
+            console.log('[DEBUG]', msg, ...args);
+        }
+
+        function createPeerConnection() {
+            if (pc) {
+                debugLog('Closing previous PeerConnection');
+                try { pc.close(); } catch (e) { debugLog('Error closing previous pc', e); }
+                pc = null;
+            }
+            pc = new RTCPeerConnection();
+            setStatus("PeerConnection created.");
+            debugLog('Created new RTCPeerConnection', pc);
+
+            pc.ontrack = (event) => {
+                setStatus("Received remote track.");
+                debugLog('ontrack event', event);
+                if (event.streams && event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                    debugLog('Set remoteVideo.srcObject to event.streams[0]', event.streams[0]);
+                } else if (event.track) {
+                    if (!remoteVideo.srcObject) {
+                        const newStream = new MediaStream([event.track]);
+                        remoteVideo.srcObject = newStream;
+                        debugLog('Set remoteVideo.srcObject to new MediaStream([event.track])', newStream);
+                    }
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                debugLog('onicecandidate event', event);
+                if (event.candidate) {
+                    setStatus("Sending ICE candidate.");
+                    socket.emit("ice-candidate", event.candidate);
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                setStatus("ICE connection state: " + pc.iceConnectionState);
+                debugLog('ICE connection state changed:', pc.iceConnectionState);
+            };
+
+            pc.onconnectionstatechange = () => {
+                debugLog('PeerConnection state changed:', pc.connectionState);
+            };
+
+            // Add any queued ICE candidates after connection is created
+            if (pendingCandidates && pendingCandidates.length > 0) {
+                debugLog('Adding queued ICE candidates', pendingCandidates);
+                const candidates = pendingCandidates.slice();
+                pendingCandidates = [];
+                candidates.forEach(async (candidate) => {
+                    try {
+                        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                        setStatus("Added queued ICE candidate.");
+                        debugLog('Added queued ICE candidate', candidate);
+                    } catch (e) {
+                        setStatus("Error adding queued ICE candidate: " + e);
+                        debugLog('Error adding queued ICE candidate', e);
+                    }
+                });
+            }
+        }
+
+        // Listen for offer from publisher
+        socket.on("offer", async (offer) => {
+            debugLog('Received offer', offer);
+            try {
+                setStatus("Received offer.");
+                createPeerConnection();
+                debugLog('Setting remote description with offer', offer);
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                debugLog('Creating answer');
+                const answer = await pc.createAnswer();
+                debugLog('Setting local description with answer', answer);
+                await pc.setLocalDescription(answer);
+                debugLog('Emitting answer to socket');
+                socket.emit("answer", answer);
+                setStatus("Sent answer.");
+            } catch (err) {
+                setStatus("Error handling offer: " + err);
+                debugLog('Error handling offer', err);
+            }
+        });
+
+        // Listen for ICE candidates from publisher
+        socket.on("ice-candidate", async (candidate) => {
+            debugLog('Received ICE candidate from socket', candidate);
+            if (!pc) {
+                setStatus("ICE candidate received but no peer connection yet, queuing.");
+                debugLog('Queuing ICE candidate', candidate);
+                pendingCandidates.push(candidate);
+                return;
+            }
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                setStatus("Added ICE candidate.");
+                debugLog('Added ICE candidate', candidate);
+            } catch (e) {
+                setStatus("Error adding ICE candidate: " + e);
+                debugLog('Error adding ICE candidate', e);
+            }
+        });
+
+        // Optional: Handle unhandled promise rejections globally for debugging
+        window.addEventListener('unhandledrejection', function (event) {
+            setStatus('Unhandled promise rejection: ' + event.reason);
+            debugLog('Unhandled promise rejection', event.reason);
+        });
+    </script>
+</body>
+
+</html>

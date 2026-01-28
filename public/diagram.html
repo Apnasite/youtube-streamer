@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Two.js Animated Triangle 60°</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/two.js/0.8.10/two.min.js"></script>
+</head>
+<body>
+<div id="draw-area"></div>
+
+<script>
+  var elem = document.getElementById('draw-area');
+  var two = new Two({ width: 400, height: 400 }).appendTo(elem);
+
+  let side = 200;
+  let x1 = 100, y1 = 300;
+  let x2 = x1 + side, y2 = y1;
+  let x3 = x1 + side/2, y3 = y1 - (Math.sqrt(3)/2) * side;
+
+  let points = [
+    [x1, y1, x2, y2],
+    [x2, y2, x3, y3],
+    [x3, y3, x1, y1]
+  ];
+
+  let i = 0;
+
+  function drawNextLine() {
+    if (i < points.length) {
+      let [xA, yA, xB, yB] = points[i];
+      let line = two.makeLine(xA, yA, xA, yA);
+      line.stroke = 'black';
+      line.linewidth = 3;
+
+      let t = 0;
+      two.bind('update', function(frameCount) {
+        if (t <= 1) {
+          line.vertices[1].x = xA + (xB - xA) * t;
+          line.vertices[1].y = yA + (yB - yA) * t;
+          t += 0.02;
+        }
+      });
+
+      two.update();
+      i++;
+    }
+  }
+
+  // Draw a new side every 1 second
+  setInterval(drawNextLine, 1000);
+</script>
+</body>
+</html>
