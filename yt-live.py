@@ -34,6 +34,12 @@ YT_COOKIES = os.environ.get("YT_COOKIES")  # optional cookies file
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 USER_AGENT_ARGS = ["--user-agent", USER_AGENT]
+YTDLP_COMMON_ARGS = [
+    "--force-ipv4",
+    "-f", "bv*+ba/b",
+    "--no-playlist",
+    "--merge-output-format", "mp4"
+]
 
 REENCODE_ARGS = [
     "-c:v", "libx264",
@@ -47,7 +53,10 @@ REENCODE_ARGS = [
     "-g", "100",  # GOP size: 4 seconds at 25fps (adjust if needed)
     "-keyint_min", "50"  # Minimum keyframe interval (2 seconds at 25fps)
 ]
-EXTRACTOR_ARGS = ["--extractor-args", "youtube:player_client=default"]
+EXTRACTOR_ARGS = [
+    "--extractor-args",
+    "youtube:player_client=android"
+]
 
 # ----- Flask app (serve static folder) -----
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -89,7 +98,15 @@ def run_cmd(cmd, capture=False, timeout=None):
 def get_channel_ids_fast(channel_url):
     """Fast list of IDs using yt-dlp --flat-playlist --get-id"""
     cookies = YT_COOKIES
-    cmd = YTDLP + (["--cookies", cookies] if cookies else []) + USER_AGENT_ARGS + ["--flat-playlist", "--get-id", channel_url] + EXTRACTOR_ARGS
+    cmd = (
+        YTDLP
+        + (["--cookies", cookies] if cookies else [])
+        + USER_AGENT_ARGS
+        + YTDLP_COMMON_ARGS
+        + ["--flat-playlist", "--get-id", channel_url]
+        + EXTRACTOR_ARGS
+    )
+
     try:
         out = run_cmd(cmd, capture=True, timeout=180)  # Increased timeout from 20 to 180 seconds
         ids = [line.strip() for line in out.splitlines() if line.strip()]
@@ -116,7 +133,14 @@ def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
 
     ids_to_fetch = ids if max_items is None else ids[:max_items]
     watch_urls = [f"https://www.youtube.com/watch?v={vid}" for vid in ids_to_fetch]
-    cmd = YTDLP + (["--cookies", cookies] if cookies else []) + USER_AGENT_ARGS + ["--dump-json"] + watch_urls + EXTRACTOR_ARGS
+    cmd = (
+        YTDLP
+        + (["--cookies", cookies] if cookies else [])
+        + USER_AGENT_ARGS
+        + YTDLP_COMMON_ARGS
+        + ["--flat-playlist", "--get-id", channel_url]
+        + EXTRACTOR_ARGS
+    )
     print("[batch] running yt-dlp for", len(watch_urls), "items", flush=True)
     batch_timeout = max(10, time_budget)
     def parse_meta(meta, vid):
@@ -240,22 +264,30 @@ def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
 def download_video_to_temp(video_id, tmp_dir):
     url = f"https://www.youtube.com/watch?v={video_id}"
     dest = os.path.join(tmp_dir, f"{video_id}.%(ext)s")
-    # cmd = YTDLP + ["-o", dest, url] + EXTRACTOR_ARGS
-    cmd = YTDLP + USER_AGENT_ARGS + ["-o", dest, url] + EXTRACTOR_ARGS
-    if YT_COOKIES:
-        cmd = YTDLP + ["--cookies", YT_COOKIES] + USER_AGENT_ARGS + ["-o", dest, url] + EXTRACTOR_ARGS
+
+    cmd = (
+        YTDLP
+        + (["--cookies", YT_COOKIES] if YT_COOKIES else [])
+        + USER_AGENT_ARGS
+        + YTDLP_COMMON_ARGS
+        + EXTRACTOR_ARGS
+        + ["-o", dest, url]
+    )
+
     try:
         subprocess.check_call(cmd)
     except Exception as e:
         print(f"[error] download failed for {video_id}: {e}", flush=True)
         return None
+
     pattern = dest.replace("%(ext)s", "*")
-    files = glob.glob(pattern)
-    files = [f for f in files if os.path.basename(f).startswith(video_id)]
-    if not files:
-        return None
-    files.sort(key=os.path.getmtime, reverse=True)
-    return files[0]
+    files = sorted(
+        glob.glob(pattern),
+        key=os.path.getmtime,
+        reverse=True
+    )
+    return files[0] if files else None
+
 
 def ffmpeg_stream_local(file_path, stream_key, reencode=False):
     rtmp = f"rtmps://a.rtmps.youtube.com/live2/{stream_key}"
