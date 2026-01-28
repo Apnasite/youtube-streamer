@@ -33,8 +33,16 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")  # optional
 YT_COOKIES = os.environ.get("YT_COOKIES")  # optional cookies file
 
 REENCODE_ARGS = [
-    "-c:v", "libx264", "-preset", "veryfast", "-maxrate", "1500k", "-bufsize", "3000k",
-    "-b:v", "1200k", "-c:a", "aac", "-b:a", "96k", "-ar", "44100"
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-maxrate", "1500k",
+    "-bufsize", "3000k",
+    "-b:v", "1200k",
+    "-c:a", "aac",
+    "-b:a", "96k",
+    "-ar", "44100",
+    "-g", "100",  # GOP size: 4 seconds at 25fps (adjust if needed)
+    "-keyint_min", "50"  # Minimum keyframe interval (2 seconds at 25fps)
 ]
 EXTRACTOR_ARGS = ["--extractor-args", "youtube:player_client=default"]
 
@@ -80,7 +88,7 @@ def get_channel_ids_fast(channel_url):
     cookies = YT_COOKIES
     cmd = YTDLP + (["--cookies", cookies] if cookies else []) + ["--flat-playlist", "--get-id", channel_url] + EXTRACTOR_ARGS
     try:
-        out = run_cmd(cmd, capture=True, timeout=20)
+        out = run_cmd(cmd, capture=True, timeout=180)  # Increased timeout from 20 to 180 seconds
         ids = [line.strip() for line in out.splitlines() if line.strip()]
         return ids
     except Exception as e:
@@ -260,21 +268,32 @@ def ffmpeg_stream_local(file_path, stream_key, reencode=False):
 def stream_selected_ids(selected_ids, stream_key):
     if not stream_key:
         return False, "Stream key missing"
-    tmp_dir = os.path.join(tempfile.gettempdir(), f"ytlive_{os.getpid()}")
+    tmp_dir = os.path.join(os.path.dirname(__file__), "downloaded_videos")
     os.makedirs(tmp_dir, exist_ok=True)
-    for vid in selected_ids:
-        if not vid or vid.startswith("UC"):
-            continue
-        local = download_video_to_temp(vid, tmp_dir)
+    import queue
+    q = queue.Queue()
+    download_results = {}
+
+    def downloader():
+        for vid in selected_ids:
+            if not vid or vid.startswith("UC"):
+                q.put((vid, None))
+                continue
+            local = download_video_to_temp(vid, tmp_dir)
+            download_results[vid] = local
+            q.put((vid, local))
+
+    t = threading.Thread(target=downloader, daemon=True)
+    t.start()
+
+    for _ in selected_ids:
+        vid, local = q.get()
         if not local:
             print(f"[warn] skipping download failed: {vid}", flush=True)
             continue
-        rc = ffmpeg_stream_local(local, stream_key, reencode=False)
+        rc = ffmpeg_stream_local(local, stream_key, reencode=True)  # Always re-encode for quality
         if rc != 0:
-            print("[info] copy failed, trying re-encode", flush=True)
-            rc2 = ffmpeg_stream_local(local, stream_key, reencode=True)
-            if rc2 != 0:
-                print(f"[error] streaming failed for {vid}", flush=True)
+            print(f"[error] streaming failed for {vid}", flush=True)
         try:
             os.remove(local)
         except:
@@ -431,6 +450,128 @@ def start_route():
             return jsonify({"ok": False, "error": msg}), 500
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+
+# --- Streaming links file logic ---
+LINKS_FILE = os.path.join(os.path.dirname(__file__), "stream_links.txt")
+
+def extract_id(url):
+    import re
+    patterns = [
+        r"v=([\w-]{11})",                # watch?v=VIDEOID
+        r"youtu\.be/([\w-]{11})",        # youtu.be/VIDEOID
+        r"shorts/([\w-]{11})"            # youtube.com/shorts/VIDEOID
+    ]
+    for pat in patterns:
+        m = re.search(pat, url)
+        if m:
+            return m.group(1)
+    return None
+
+def read_links_file():
+    if not os.path.exists(LINKS_FILE):
+        return []
+    with open(LINKS_FILE, "r", encoding="utf-8") as f:
+        return [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+
+def write_links_file(links, mode="replace"):
+    links = [l.strip() for l in links if l.strip()]
+    if mode == "append" and os.path.exists(LINKS_FILE):
+        old = read_links_file()
+        links = old + [l for l in links if l not in old]
+    with open(LINKS_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(links) + "\n")
+
+current_streaming = {"current": None}
+def stream_from_links_file(stream_key):
+    tmp_dir = os.path.join(os.path.dirname(__file__), "downloaded_videos")
+    os.makedirs(tmp_dir, exist_ok=True)
+    import queue
+    while True:
+        links = read_links_file()
+        ids = [extract_id(link) for link in links]
+        ids = [vid for vid in ids if vid and not vid.startswith("UC")]
+        if not ids:
+            print("[stream_links] No valid video IDs in file. Waiting for links...", flush=True)
+            current_streaming["current"] = None
+            time.sleep(5)
+            continue
+
+        q = queue.Queue()
+        download_results = {}
+
+        def downloader():
+            for vid in ids:
+                local = download_video_to_temp(vid, tmp_dir)
+                download_results[vid] = local
+                q.put((vid, local))
+
+        t = threading.Thread(target=downloader, daemon=True)
+        t.start()
+
+        for _ in ids:
+            vid, local = q.get()
+            current_streaming["current"] = vid
+            if not local:
+                print(f"[warn] skipping download failed: {vid}", flush=True)
+                continue
+            rc = ffmpeg_stream_local(local, stream_key, reencode=True)  # Always re-encode for quality
+            if rc != 0:
+                print(f"[error] streaming failed for {vid}", flush=True)
+            try:
+                os.remove(local)
+            except:
+                pass
+            time.sleep(1)
+        current_streaming["current"] = None
+
+# API to get current streaming list and current video
+@app.route("/api/stream_links", methods=["GET"])
+def api_stream_links():
+    links = read_links_file()
+    ids = [extract_id(link) for link in links]
+    ids = [vid for vid in ids if vid and not vid.startswith("UC")]
+    return jsonify({
+        "links": links,
+        "ids": ids,
+        "current": current_streaming.get("current")
+    })
+
+@app.route("/start_links", methods=["POST"])
+def start_links_route():
+    password = request.form.get("password") or (request.json.get("password") if request.is_json else None)
+    if ADMIN_PASSWORD:
+        if not password or password != ADMIN_PASSWORD:
+            return jsonify({"ok": False, "error": "Invalid admin password"}), 403
+
+    stream_key = request.form.get("stream_key") or (request.json.get("stream_key") if request.is_json else None) or DEFAULT_STREAM_KEY
+    if not stream_key:
+        return jsonify({"ok": False, "error": "Missing stream_key"}), 400
+
+    links = []
+    mode = request.form.get("mode") or (request.json.get("mode") if request.is_json else "replace")
+    if request.is_json:
+        body = request.get_json(silent=True) or {}
+        if isinstance(body.get("links"), list):
+            links = body.get("links")
+        elif isinstance(body.get("links"), str):
+            links = [l.strip() for l in body.get("links").splitlines() if l.strip()]
+    else:
+        links_raw = request.form.get("links")
+        if links_raw:
+            links = [l.strip() for l in links_raw.splitlines() if l.strip()]
+    if not links:
+        return jsonify({"ok": False, "error": "No video links provided"}), 400
+
+    write_links_file(links, mode=mode)
+
+    # Start streaming in a background thread if not already running
+    def run_stream():
+        stream_from_links_file(stream_key)
+    t = threading.Thread(target=run_stream, daemon=True)
+    t.start()
+    return jsonify({"ok": True, "message": f"Streaming started with {len(links)} links ({mode})"})
 
 # Serve other static files (CSS/JS)
 @app.route("/<path:path>")

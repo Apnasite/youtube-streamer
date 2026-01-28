@@ -1,3 +1,35 @@
+  // --- Streaming links panel ---
+  const streamLinksPanel = document.getElementById("streamLinksPanel");
+  const streamLinksList = document.getElementById("streamLinksList");
+  const currentStreamingVideo = document.getElementById("currentStreamingVideo");
+
+  async function updateStreamLinksPanel() {
+    try {
+      const resp = await fetch("/api/stream_links");
+      const data = await resp.json();
+      streamLinksList.innerHTML = "";
+      (data.links || []).forEach((link, i) => {
+        const li = document.createElement("li");
+        li.textContent = link;
+        if (data.current && data.ids && data.ids[i] === data.current) {
+          li.className = "fw-bold text-success";
+        }
+        streamLinksList.appendChild(li);
+      });
+      if (data.current) {
+        currentStreamingVideo.innerHTML = `<a href="https://youtube.com/watch?v=${data.current}" target="_blank">${data.current}</a>`;
+      } else {
+        currentStreamingVideo.textContent = "(none)";
+      }
+    } catch (e) {
+      streamLinksList.innerHTML = "<li class='text-danger'>Error loading streaming list</li>";
+      currentStreamingVideo.textContent = "(unknown)";
+    }
+  }
+
+  // Poll every 5 seconds
+  setInterval(updateStreamLinksPanel, 5000);
+  window.addEventListener("DOMContentLoaded", updateStreamLinksPanel);
 // static/js/script.js
 (() => {
   const openListBtn = document.getElementById("openListBtn");
@@ -181,7 +213,38 @@
     }
   });
 
-  // auto-open on load (optional)
-  // openListBtn.click();
+
+  // Stream pasted YouTube links
+  const streamLinksBtn = document.getElementById("streamLinksBtn");
+  const ytLinksTextarea = document.getElementById("ytLinksTextarea");
+  if (streamLinksBtn && ytLinksTextarea) {
+    streamLinksBtn.addEventListener("click", async () => {
+      const streamKey = document.getElementById("streamKeyInput").value.trim();
+      if (!streamKey) { showMessage("Stream key is required", "warning"); return; }
+      const links = ytLinksTextarea.value.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+      if (!links.length) { showMessage("Paste at least one YouTube link", "warning"); return; }
+
+      // Get mode (append or replace)
+      const mode = document.querySelector('input[name="linksMode"]:checked')?.value || "replace";
+
+      showMessage("Starting stream for pasted links. This can take a while.", "info");
+      const form = new FormData();
+      form.append("stream_key", streamKey);
+      form.append("links", links.join("\n"));
+      form.append("mode", mode);
+
+      try {
+        const resp = await fetch("/start_links", { method: "POST", body: form });
+        const data = await resp.json();
+        if (data.ok) {
+          showMessage("Streaming started: " + (data.message || ""), "success");
+        } else {
+          showMessage("Error: " + (data.error || "unknown"), "danger");
+        }
+      } catch (err) {
+        showMessage("Error: " + err.message, "danger");
+      }
+    });
+  }
 
 })();

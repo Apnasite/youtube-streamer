@@ -35,7 +35,35 @@
       </div>
     </div>
 
+    <div class="row mb-3 gx-3">
+      <div class="col-md-8">
+        <label class="form-label">Paste YouTube Video Links (one per line)</label>
+        <textarea id="ytLinksTextarea" class="form-control" rows="3" placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\n..."></textarea>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <div class="form-check me-2">
+          <input class="form-check-input" type="radio" name="linksMode" id="modeReplace" value="replace" checked>
+          <label class="form-check-label" for="modeReplace">Replace</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="linksMode" id="modeAppend" value="append">
+          <label class="form-check-label" for="modeAppend">Append</label>
+        </div>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button id="streamLinksBtn" class="btn btn-success w-100">Stream Pasted Links</button>
+      </div>
+    </div>
+
     <div id="messageArea"></div>
+
+    <div class="card mb-3" id="streamLinksPanel">
+      <div class="card-header">Current Streaming List</div>
+      <div class="card-body">
+        <div><b>Currently Streaming:</b> <span id="currentStreamingVideo">(none)</span></div>
+        <ul id="streamLinksList" class="mt-2 mb-0"></ul>
+      </div>
+    </div>
 
     <div id="listPanel" class="card p-3 mb-4" style="display:none;">
       <div class="d-flex justify-content-between align-items-center mb-2">
