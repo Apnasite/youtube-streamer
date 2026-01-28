@@ -101,14 +101,19 @@ def run_cmd(cmd, capture=False, timeout=None):
 
 def get_channel_ids_fast(channel_url):
     """Fast list of IDs using yt-dlp --flat-playlist --get-id"""
-    cookies = YT_COOKIES
+    cookies_args = []
+    extractor_args = []
+    if YT_COOKIES and os.path.isfile(YT_COOKIES):
+        cookies_args = ["--cookies", YT_COOKIES]
+    else:
+        extractor_args = EXTRACTOR_ARGS
     cmd = (
         YTDLP
-        + (["--cookies", cookies] if cookies else [])
+        + cookies_args
         + USER_AGENT_ARGS
         + YTDLP_COMMON_ARGS
         + ["--flat-playlist", "--get-id", channel_url]
-        + EXTRACTOR_ARGS
+        + extractor_args
     )
 
     try:
@@ -119,7 +124,7 @@ def get_channel_ids_fast(channel_url):
         print("[error] get-id failed:", e, flush=True)
         return []
 
-def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
+def fetch_metadata_for_ids(ids, max_items=None, time_budget=50, channel_url=None):
         # ...existing code...
     """
     Batch-fetch metadata for a list of video ids using a single yt-dlp call
@@ -130,20 +135,25 @@ def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
     """
     import json, subprocess, time
 
-    cookies = YT_COOKIES
     results = []
     if not ids:
         return results
 
     ids_to_fetch = ids if max_items is None else ids[:max_items]
     watch_urls = [f"https://www.youtube.com/watch?v={vid}" for vid in ids_to_fetch]
+    cookies_args = []
+    extractor_args = []
+    if YT_COOKIES and os.path.isfile(YT_COOKIES):
+        cookies_args = ["--cookies", YT_COOKIES]
+    else:
+        extractor_args = EXTRACTOR_ARGS
     cmd = (
         YTDLP
-        + (["--cookies", cookies] if cookies else [])
+        + cookies_args
         + USER_AGENT_ARGS
         + YTDLP_COMMON_ARGS
         + ["--flat-playlist", "--get-id", channel_url]
-        + EXTRACTOR_ARGS
+        + extractor_args
     )
     print("[batch] running yt-dlp for", len(watch_urls), "items", flush=True)
     batch_timeout = max(10, time_budget)
@@ -268,13 +278,18 @@ def fetch_metadata_for_ids(ids, max_items=None, time_budget=50):
 def download_video_to_temp(video_id, tmp_dir):
     url = f"https://www.youtube.com/watch?v={video_id}"
     dest = os.path.join(tmp_dir, f"{video_id}.%(ext)s")
-
+    cookies_args = []
+    extractor_args = []
+    if YT_COOKIES and os.path.isfile(YT_COOKIES):
+        cookies_args = ["--cookies", YT_COOKIES]
+    else:
+        extractor_args = EXTRACTOR_ARGS
     cmd = (
         YTDLP
-        + (["--cookies", YT_COOKIES] if YT_COOKIES else [])
+        + cookies_args
         + USER_AGENT_ARGS
         + YTDLP_COMMON_ARGS
-        + EXTRACTOR_ARGS
+        + extractor_args
         + ["-o", dest, url]
     )
 
@@ -378,7 +393,7 @@ def refresh_cache(channel_url=DEFAULT_CHANNEL):
             videos.append(cached_videos[vid])
         else:
             # Fetch metadata for this vid one by one
-            meta_list = fetch_metadata_for_ids([vid], max_items=1, time_budget=20)
+            meta_list = fetch_metadata_for_ids([vid], max_items=1, time_budget=20, channel_url=channel_url)
             if meta_list and len(meta_list) == 1:
                 meta = meta_list[0]
                 videos.append(meta)
